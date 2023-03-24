@@ -10,6 +10,7 @@
 #include <linux/gfp.h>
 #include <linux/mm.h>
 #include <linux/mutex.h>
+#include <linux/err.h>
 #include "avc.h"
 #include "security.h"
 
@@ -39,36 +40,47 @@
  * It returns a reference to selinux_status_page. If the status page is
  * not allocated yet, it also tries to allocate it at the first time.
  */
+
 struct page *selinux_kernel_status_page(struct selinux_state *state)
 {
-	struct selinux_kernel_status   *status;
-	struct page		       *result = NULL;
+    struct selinux_kernel_status *status;
+    struct page *result = NULL;
 
-	mutex_lock(&state->status_lock);
-	if (!state->status_page) {
-		state->status_page = alloc_page(GFP_KERNEL|__GFP_ZERO);
+    if (!state) {
+        pr_err("selinux_kernel_status_page: NULL state pointer\n");
+        return ERR_PTR(-EINVAL);
+    }
 
-		if (state->status_page) {
-			status = page_address(state->status_page);
+    mutex_lock(&state->status_lock);
 
-			status->version = SELINUX_KERNEL_STATUS_VERSION;
-			status->sequence = 0;
-			status->enforcing = enforcing_enabled(state);
-			/*
-			 * NOTE: the next policyload event shall set
-			 * a positive value on the status->policyload,
-			 * although it may not be 1, but never zero.
-			 * So, application can know it was updated.
-			 */
-			status->policyload = 0;
-			status->deny_unknown =
-				!security_get_allow_unknown(state);
-		}
-	}
-	result = state->status_page;
-	mutex_unlock(&state->status_lock);
+    if (!state->status_page) {
+        state->status_page = alloc_page(GFP_KERNEL | __GFP_ZERO);
 
-	return result;
+        if (!state->status_page) {
+            pr_err("selinux_kernel_status_page: Failed to allocate status_page\n");
+            mutex_unlock(&state->status_lock);
+            return ERR_PTR(-ENOMEM);
+        }
+
+        status = page_address(state->status_page);
+
+        status->version = SELINUX_KERNEL_STATUS_VERSION;
+        status->sequence = 0;
+        status->enforcing = enforcing_enabled(state);
+        /*
+         * NOTE: the next policyload event shall set
+         * a positive value on the status->policyload,
+         * although it may not be 1, but never zero.
+         * So, application can know it was updated.
+         */
+        status->policyload = 0;
+        status->deny_unknown = !security_get_allow_unknown(state);
+    }
+
+    result = state->status_page;
+    mutex_unlock(&state->status_lock);
+
+    return result;
 }
 
 /*
